@@ -85,8 +85,8 @@ public class CompareProcessor extends AbstractProcessor {
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR).expressionLanguageSupported(true).build();
 
     public static final PropertyDescriptor RepeatDelay = new PropertyDescriptor.Builder().name("repeat_delay")
-            .displayName("Delay for message repetition [seconds]").description("Delay for message repetition [seconds]").required(false)
-            .addValidator(StandardValidators.TIME_PERIOD_VALIDATOR).expressionLanguageSupported(true).build();
+            .displayName("Delay for message repetition").description("Delay for message repetition").required(false)
+            .addValidator(StandardValidators.TIME_PERIOD_VALIDATOR).build();
 
     public static final Relationship MESSAGE = new Relationship.Builder().name("message")
             .description("New message sent if condition is met").build();
