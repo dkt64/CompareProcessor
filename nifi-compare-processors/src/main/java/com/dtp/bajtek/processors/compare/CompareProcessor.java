@@ -1,19 +1,19 @@
 /*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+* Licensed to the Apache Software Foundation (ASF) under one or more
+* contributor license agreements.  See the NOTICE file distributed with
+* this work for additional information regarding copyright ownership.
+* The ASF licenses this file to You under the Apache License, Version 2.0
+* (the "License"); you may not use this file except in compliance with
+* the License.  You may obtain a copy of the License at
+*
+*     http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
 package com.dtp.bajtek.processors.compare;
 
 import org.apache.nifi.flowfile.FlowFile;
@@ -67,14 +67,27 @@ public class CompareProcessor extends AbstractProcessor {
             .displayName("Signal value descriptor").description("Value field in json").required(true)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR).expressionLanguageSupported(true).build();
     public static final PropertyDescriptor Value = new PropertyDescriptor.Builder().name("val")
-            .displayName("Value to compare").description("Static value").required(true)
+            .displayName("Value to compare with").description("Static value").required(true)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR).expressionLanguageSupported(true).build();
     public static final PropertyDescriptor Operator = new PropertyDescriptor.Builder().name("op")
-            .displayName("Operator").description("Comparation operator").required(true)
-            .addValidator(StandardValidators.NON_EMPTY_VALIDATOR).build();
+            .displayName("Operator").description("Comparation operator")
+            .allowableValues("<", "==", ">", ">=", "!=", "<=") // <, ==, >, >=, !=, <=
+            .required(true).addValidator(StandardValidators.NON_EMPTY_VALIDATOR).build();
     public static final PropertyDescriptor OutputMessage = new PropertyDescriptor.Builder().name("output_message")
-            .displayName("Output message").description("Timediff field in output json").required(false)
+            .displayName("Output message").description("Output message").required(false)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR).expressionLanguageSupported(true).build();
+
+    public static final PropertyDescriptor OutputMessage_id = new PropertyDescriptor.Builder().name("output_message_id")
+            .displayName("Output message JSON descriptor").description("Output message JSON descriptor").required(true)
+            .addValidator(StandardValidators.NON_EMPTY_VALIDATOR).expressionLanguageSupported(true).build();
+    public static final PropertyDescriptor OutputVal_id = new PropertyDescriptor.Builder().name("output_val_id")
+            .displayName("Output value JSON descriptor").description("Output message JSON descriptor").required(true)
+            .addValidator(StandardValidators.NON_EMPTY_VALIDATOR).expressionLanguageSupported(true).build();
+
+    public static final PropertyDescriptor RepeatDelay = new PropertyDescriptor.Builder().name("repeat_delay")
+            .displayName("Delay for message repetition [seconds]").description("Delay for message repetition [seconds]").required(false)
+            .addValidator(StandardValidators.TIME_PERIOD_VALIDATOR).expressionLanguageSupported(true).build();
+
     public static final Relationship MESSAGE = new Relationship.Builder().name("message")
             .description("New message sent if condition is met").build();
     public static final Relationship FAILURE = new Relationship.Builder().name("failure")
@@ -84,6 +97,24 @@ public class CompareProcessor extends AbstractProcessor {
 
     private Set<Relationship> relationships;
 
+    public Boolean CheckValue(String op, BigDecimal val1, BigDecimal val2) {
+        switch (op) {
+        case "<":
+            return val1.compareTo(val2) < 0 ? true : false;
+        case "==":
+            return val1.compareTo(val2) == 0 ? true : false;
+        case ">":
+            return val1.compareTo(val2) > 0 ? true : false;
+        case ">=":
+            return val1.compareTo(val2) >= 0 ? true : false;
+        case "!=":
+            return val1.compareTo(val2) != 0 ? true : false;
+        case "<=":
+            return val1.compareTo(val2) <= 0 ? true : false;
+        }
+        return false;
+    }
+
     @Override
     protected void init(final ProcessorInitializationContext context) {
         final List<PropertyDescriptor> descriptors = new ArrayList<PropertyDescriptor>();
@@ -92,6 +123,9 @@ public class CompareProcessor extends AbstractProcessor {
         descriptors.add(Value);
         descriptors.add(Operator);
         descriptors.add(OutputMessage);
+        descriptors.add(OutputMessage_id);
+        descriptors.add(OutputVal_id);
+        descriptors.add(RepeatDelay);
         this.descriptors = Collections.unmodifiableList(descriptors);
 
         final Set<Relationship> relationships = new HashSet<Relationship>();
@@ -125,17 +159,19 @@ public class CompareProcessor extends AbstractProcessor {
             return;
         }
 
-        String prop_id_name = context.getProperty(Signal_id).getValue();
-        String prop_id_val = context.getProperty(Signal_val).getValue();
-        String prop_val = context.getProperty(Value).getValue();
+        String prop_id_name = context.getProperty(Signal_id).evaluateAttributeExpressions(flowfile).getValue();
+        String prop_id_val = context.getProperty(Signal_val).evaluateAttributeExpressions(flowfile).getValue();
+        String prop_val = context.getProperty(Value).evaluateAttributeExpressions(flowfile).getValue();
         String prop_op = context.getProperty(Operator).getValue();
-        String prop_message = context.getProperty(OutputMessage).getValue();
+        String prop_message = context.getProperty(OutputMessage).evaluateAttributeExpressions(flowfile).getValue();
+        String prop_outmessage_id = context.getProperty(OutputMessage_id).evaluateAttributeExpressions(flowfile)
+                .getValue();
+        String prop_outval_id = context.getProperty(OutputVal_id).evaluateAttributeExpressions(flowfile).getValue();
 
         session.read(flowfile, new InputStreamCallback() {
             @Override
             public void process(InputStream in) throws IOException {
                 try {
-
                     String json = IOUtils.toString(in);
 
                     // Object obj = new JSONParser().parse(json);
@@ -144,11 +180,15 @@ public class CompareProcessor extends AbstractProcessor {
                     String signal_name = (String) parsedJson.get(prop_id_name);
                     BigDecimal signal_val = (BigDecimal) parsedJson.get(prop_id_val);
 
-                    // 1 parametr
-                    final JsonObject newJson = new JsonObject();
-                    newJson.put(prop_message, signal_name + "=" + signal_val + " " + prop_op + " " + prop_val);
-                    String outstring = newJson.toJson();
-                    value.set(outstring);
+                    BigDecimal val = new BigDecimal(prop_val);
+                    if (CheckValue(prop_op, signal_val, val)) {
+                        // 1 parametr
+                        final JsonObject newJson = new JsonObject();
+                        newJson.put(prop_outmessage_id, prop_message);
+                        newJson.put(prop_outval_id, signal_name + " " + signal_val + prop_op + prop_val);
+                        String outstring = newJson.toJson();
+                        value.set(outstring);
+                    }
 
                 } catch (Exception ex) {
                     ex.printStackTrace();
