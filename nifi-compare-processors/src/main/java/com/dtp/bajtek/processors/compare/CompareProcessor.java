@@ -23,6 +23,7 @@ import org.apache.nifi.annotation.behavior.ReadsAttributes;
 import org.apache.nifi.annotation.behavior.WritesAttribute;
 import org.apache.nifi.annotation.behavior.WritesAttributes;
 import org.apache.nifi.annotation.lifecycle.OnScheduled;
+import org.apache.nifi.annotation.lifecycle.OnStopped;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
 import org.apache.nifi.annotation.documentation.SeeAlso;
 import org.apache.nifi.annotation.documentation.Tags;
@@ -44,6 +45,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
+import java.time.Duration;
+import java.time.LocalTime;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -85,8 +88,9 @@ public class CompareProcessor extends AbstractProcessor {
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR).expressionLanguageSupported(true).build();
 
     public static final PropertyDescriptor RepeatDelay = new PropertyDescriptor.Builder().name("repeat_delay")
-            .displayName("Delay for message repetition").description("Delay for message repetition").required(false)
-            .addValidator(StandardValidators.TIME_PERIOD_VALIDATOR).build();
+            .displayName("Delay for message repetition")
+            .description("Delay for message repetition in ISO-8601 standard").required(false)
+            .addValidator(StandardValidators.NON_EMPTY_VALIDATOR).build();
 
     public static final Relationship MESSAGE = new Relationship.Builder().name("message")
             .description("New message sent if condition is met").build();
@@ -97,20 +101,23 @@ public class CompareProcessor extends AbstractProcessor {
 
     private Set<Relationship> relationships;
 
+    LocalTime time1 = LocalTime.now();
+    Boolean firstMessage = true;
+
     public Boolean CheckValue(String op, BigDecimal val1, BigDecimal val2) {
         switch (op) {
-        case "<":
-            return val1.compareTo(val2) < 0 ? true : false;
-        case "==":
-            return val1.compareTo(val2) == 0 ? true : false;
-        case ">":
-            return val1.compareTo(val2) > 0 ? true : false;
-        case ">=":
-            return val1.compareTo(val2) >= 0 ? true : false;
-        case "!=":
-            return val1.compareTo(val2) != 0 ? true : false;
-        case "<=":
-            return val1.compareTo(val2) <= 0 ? true : false;
+            case "<":
+                return val1.compareTo(val2) < 0 ? true : false;
+            case "==":
+                return val1.compareTo(val2) == 0 ? true : false;
+            case ">":
+                return val1.compareTo(val2) > 0 ? true : false;
+            case ">=":
+                return val1.compareTo(val2) >= 0 ? true : false;
+            case "!=":
+                return val1.compareTo(val2) != 0 ? true : false;
+            case "<=":
+                return val1.compareTo(val2) <= 0 ? true : false;
         }
         return false;
     }
@@ -149,6 +156,11 @@ public class CompareProcessor extends AbstractProcessor {
 
     }
 
+    @OnStopped
+    public void onStopped(final ProcessContext context) {
+        firstMessage = true;
+    }
+
     @Override
     public void onTrigger(final ProcessContext context, final ProcessSession session) throws ProcessException {
 
@@ -168,31 +180,53 @@ public class CompareProcessor extends AbstractProcessor {
                 .getValue();
         String prop_outval_id = context.getProperty(OutputVal_id).evaluateAttributeExpressions(flowfile).getValue();
 
+        String prop_delay_time = context.getProperty(RepeatDelay).getValue();
+
         session.read(flowfile, new InputStreamCallback() {
             @Override
             public void process(InputStream in) throws IOException {
+
+                Duration durr;
+
                 try {
+
+                    LocalTime time2 = LocalTime.now();
+
+                    if (prop_delay_time == null) {
+                        durr = Duration.ZERO;
+                    } else {
+                        if (prop_delay_time != "") {
+                            durr = Duration.parse(prop_delay_time);
+                        } else {
+                            durr = Duration.ZERO;
+                        }
+                    }
+
                     String json = IOUtils.toString(in);
 
-                    // Object obj = new JSONParser().parse(json);
                     JsonObject parsedJson = (JsonObject) Jsoner.deserialize(json);
 
                     String signal_name = (String) parsedJson.get(prop_id_name);
                     BigDecimal signal_val = (BigDecimal) parsedJson.get(prop_id_val);
 
                     BigDecimal val = new BigDecimal(prop_val);
-                    if (CheckValue(prop_op, signal_val, val)) {
-                        // 1 parametr
-                        final JsonObject newJson = new JsonObject();
-                        newJson.put(prop_outmessage_id, prop_message);
-                        newJson.put(prop_outval_id, signal_name + " " + signal_val + prop_op + prop_val);
-                        String outstring = newJson.toJson();
-                        value.set(outstring);
+                    if ((Duration.between(time1, time2).compareTo(durr) >= 0) || firstMessage) {
+                        if (CheckValue(prop_op, signal_val, val)) {
+                            // 1 parametr
+                            final JsonObject newJson = new JsonObject();
+                            newJson.put(prop_id_name, signal_name);
+                            newJson.put(prop_outmessage_id, prop_message);
+                            newJson.put(prop_outval_id, signal_val + prop_op + prop_val);
+                            String outstring = newJson.toJson();
+                            value.set(outstring);
+                            time1 = LocalTime.now();
+                            firstMessage = false;
+                        }
                     }
 
                 } catch (Exception ex) {
                     ex.printStackTrace();
-                    getLogger().error("Failed to read json string. " + ex.toString());
+                    getLogger().error("Failed to read json string or duration format. " + ex.toString());
                 }
             }
         });

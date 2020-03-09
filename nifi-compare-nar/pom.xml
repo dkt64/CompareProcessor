@@ -23,7 +23,7 @@
     </parent>
 
     <artifactId>nifi-compare-nar</artifactId>
-    <version>1.0</version>
+    <version>1.1</version>
     <packaging>nar</packaging>
     <properties>
         <maven.javadoc.skip>true</maven.javadoc.skip>
@@ -34,7 +34,7 @@
         <dependency>
             <groupId>com.dtp.bajtek</groupId>
             <artifactId>nifi-compare-processors</artifactId>
-            <version>1.0</version>
+            <version>1.1</version>
         </dependency>
     </dependencies>
 

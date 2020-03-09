@@ -19,7 +19,7 @@
     <parent>
         <groupId>com.dtp.bajtek</groupId>
         <artifactId>compare-processor</artifactId>
-        <version>1.0</version>
+        <version>1.1</version>
     </parent>
 
     <artifactId>nifi-compare-processors</artifactId>
